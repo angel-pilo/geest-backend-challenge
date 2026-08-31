@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { ApiError } from "../../common/errors/api-error";
+import { idempotent } from "../../common/middleware/idempotency";
 import { query } from "../../database/pool";
 
 export const usersRouter = Router();
@@ -40,8 +41,8 @@ interface UserTaskRow {
   completed_at: string | null;
 }
 
-function parseUserId(value: string): number {
-  if (!/^\d+$/.test(value)) {
+function parseUserId(value: unknown): number {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
     throw new ApiError(400, "VALIDATION_ERROR", "Invalid user ID");
   }
   const id = Number(value);
@@ -59,9 +60,9 @@ function parseBody(body: unknown): z.infer<typeof createUserSchema> {
   return result.data;
 }
 
-usersRouter.post("/", async (request, response) => {
+usersRouter.post("/", idempotent(async (request, client) => {
   const input = parseBody(request.body);
-  const result = await query<UserRow>(
+  const result = await client.query<UserRow>(
     `INSERT INTO users (name, last_name, email)
      VALUES ($1, $2, $3)
      RETURNING id, name, last_name, email`,
@@ -69,13 +70,16 @@ usersRouter.post("/", async (request, response) => {
   );
   const user = result.rows[0];
 
-  response.status(201).json({
-    id: Number(user?.id),
-    name: user?.name,
-    lastName: user?.last_name,
-    email: user?.email
-  });
-});
+  return {
+    statusCode: 201,
+    body: {
+      id: Number(user?.id),
+      name: user?.name,
+      lastName: user?.last_name,
+      email: user?.email
+    }
+  };
+}));
 
 usersRouter.get("/", async (_request, response) => {
   const result = await query<UserWithTasksRow>(
