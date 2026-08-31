@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { ApiError } from "../../common/errors/api-error";
-import { query } from "../../database/pool";
+import { query, withTransaction } from "../../database/pool";
 
 export const tasksRouter = Router();
 
@@ -11,6 +11,14 @@ const createTaskSchema = z.strictObject({
 });
 
 const taskStatusSchema = z.enum(["open", "archived"]);
+
+const assignUsersSchema = z.strictObject({
+  userIds: z.array(z.number().int().positive().safe()).min(1)
+});
+
+const completeTaskSchema = z.strictObject({
+  userId: z.number().int().positive().safe()
+});
 
 interface TaskRow {
   id: string;
@@ -108,6 +116,132 @@ tasksRouter.post("/", async (request, response) => {
     archivedAt: task?.archived_at,
     createdAt: task?.created_at
   });
+});
+
+tasksRouter.post("/:idTask/assign", async (request, response) => {
+  const taskId = parseTaskId(request.params.idTask);
+  const parsed = assignUsersSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Invalid assignment data");
+  }
+  const userIds = [...new Set(parsed.data.userIds)];
+
+  const result = await withTransaction(async (client) => {
+    const task = await client.query<{ status: "open" | "archived" }>(
+      "SELECT status FROM tasks WHERE id = $1 FOR UPDATE",
+      [taskId]
+    );
+    if (!task.rows[0]) {
+      throw new ApiError(404, "TASK_NOT_FOUND", "Task not found");
+    }
+    if (task.rows[0].status === "archived") {
+      throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot receive assignments");
+    }
+
+    const users = await client.query<{ id: string }>(
+      "SELECT id FROM users WHERE id = ANY($1::bigint[])",
+      [userIds]
+    );
+    if (users.rows.length !== userIds.length) {
+      throw new ApiError(404, "USER_NOT_FOUND", "One or more users were not found");
+    }
+
+    await client.query(
+      `INSERT INTO task_assignments (task_id, user_id)
+       SELECT $1, user_id
+         FROM unnest($2::bigint[]) AS user_id
+       ON CONFLICT (task_id, user_id) DO NOTHING`,
+      [taskId, userIds]
+    );
+
+    return { taskId, assignedUserIds: userIds };
+  });
+
+  response.json({ message: "Users assigned successfully", ...result });
+});
+
+tasksRouter.post("/:idTask/complete", async (request, response) => {
+  const taskId = parseTaskId(request.params.idTask);
+  const parsed = completeTaskSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Invalid completion data");
+  }
+  const { userId } = parsed.data;
+
+  const result = await withTransaction(async (client) => {
+    const task = await client.query<{
+      title: string;
+      status: "open" | "archived";
+      archived_at: string | null;
+    }>("SELECT title, status, archived_at FROM tasks WHERE id = $1 FOR UPDATE", [taskId]);
+    const taskRow = task.rows[0];
+    if (!taskRow) {
+      throw new ApiError(404, "TASK_NOT_FOUND", "Task not found");
+    }
+
+    const user = await client.query("SELECT 1 FROM users WHERE id = $1", [userId]);
+    if (!user.rows[0]) {
+      throw new ApiError(404, "USER_NOT_FOUND", "User not found");
+    }
+
+    const assignment = await client.query<{ completed_at: string | null }>(
+      `SELECT completed_at
+         FROM task_assignments
+        WHERE task_id = $1 AND user_id = $2
+        FOR UPDATE`,
+      [taskId, userId]
+    );
+    const assignmentRow = assignment.rows[0];
+    if (!assignmentRow) {
+      throw new ApiError(409, "USER_NOT_ASSIGNED", "User is not assigned to this task");
+    }
+
+    if (assignmentRow.completed_at === null) {
+      await client.query(
+        `UPDATE task_assignments
+            SET completed_at = NOW()
+          WHERE task_id = $1 AND user_id = $2`,
+        [taskId, userId]
+      );
+    }
+
+    let status = taskRow.status;
+    let archivedAt = taskRow.archived_at;
+    if (status === "open") {
+      const pending = await client.query(
+        `SELECT 1
+           FROM task_assignments
+          WHERE task_id = $1 AND completed_at IS NULL
+          LIMIT 1`,
+        [taskId]
+      );
+
+      if (!pending.rows[0]) {
+        const archived = await client.query<{ archived_at: string }>(
+          `UPDATE tasks
+              SET status = 'archived', archived_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND status = 'open'
+            RETURNING archived_at`,
+          [taskId]
+        );
+        const archivedRow = archived.rows[0];
+        if (archivedRow) {
+          status = "archived";
+          archivedAt = archivedRow.archived_at;
+          await client.query(
+            `INSERT INTO notification_jobs (task_id)
+             VALUES ($1)
+             ON CONFLICT (task_id) DO NOTHING`,
+            [taskId]
+          );
+        }
+      }
+    }
+
+    return { taskId, userId, taskStatus: status, archivedAt };
+  });
+
+  response.json({ message: "User task participation completed", ...result });
 });
 
 tasksRouter.get("/", async (request, response) => {
