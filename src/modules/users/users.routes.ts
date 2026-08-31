@@ -30,6 +30,27 @@ interface UserWithTasksRow extends UserRow {
   pending_tasks: PendingTask[];
 }
 
+interface UserTaskRow {
+  id: string;
+  title: string;
+  description: string | null;
+  status: "open" | "archived";
+  archived_at: string | null;
+  assigned_at: string;
+  completed_at: string | null;
+}
+
+function parseUserId(value: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Invalid user ID");
+  }
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Invalid user ID");
+  }
+  return id;
+}
+
 function parseBody(body: unknown): z.infer<typeof createUserSchema> {
   const result = createUserSchema.safeParse(body);
   if (!result.success) {
@@ -95,6 +116,42 @@ usersRouter.get("/", async (_request, response) => {
         ...task,
         id: Number(task.id)
       }))
+    }))
+  );
+});
+
+usersRouter.get("/:idUser/tasks", async (request, response) => {
+  const userId = parseUserId(request.params.idUser);
+  const user = await query<{ id: string }>("SELECT id FROM users WHERE id = $1", [userId]);
+  if (!user.rows[0]) {
+    throw new ApiError(404, "USER_NOT_FOUND", "User not found");
+  }
+
+  const result = await query<UserTaskRow>(
+    `SELECT t.id,
+            t.title,
+            t.description,
+            t.status,
+            t.archived_at,
+            ta.assigned_at,
+            ta.completed_at
+       FROM task_assignments ta
+       JOIN tasks t ON t.id = ta.task_id
+      WHERE ta.user_id = $1
+      ORDER BY ta.assigned_at, t.id`,
+    [userId]
+  );
+
+  response.json(
+    result.rows.map((task) => ({
+      id: Number(task.id),
+      title: task.title,
+      description: task.description,
+      status: task.status,
+      archivedAt: task.archived_at,
+      assignedAt: task.assigned_at,
+      completed: task.completed_at !== null,
+      completedAt: task.completed_at
     }))
   );
 });
