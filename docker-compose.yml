@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: geest
+      POSTGRES_USER: geest
+      POSTGRES_PASSWORD: geest
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geest -d geest"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - geest_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  geest_postgres_data:

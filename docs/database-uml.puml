@@ -1,0 +1,83 @@
+@startuml
+hide methods
+skinparam classAttributeIconSize 0
+
+class users {
+  + id: BIGSERIAL <<PK>>
+  --
+  name: VARCHAR(100)
+  last_name: VARCHAR(100)
+  email: VARCHAR(320)
+  created_at: TIMESTAMPTZ
+}
+
+class tasks {
+  + id: BIGSERIAL <<PK>>
+  --
+  title: VARCHAR(200)
+  description: TEXT NULL
+  status: VARCHAR(16)
+  archived_at: TIMESTAMPTZ NULL
+  created_at: TIMESTAMPTZ
+  updated_at: TIMESTAMPTZ
+}
+
+class task_assignments {
+  + task_id: BIGINT <<PK, FK>>
+  + user_id: BIGINT <<PK, FK>>
+  --
+  completed_at: TIMESTAMPTZ NULL
+  assigned_at: TIMESTAMPTZ
+}
+
+class idempotency_requests {
+  + id: BIGSERIAL <<PK>>
+  --
+  idempotency_key: VARCHAR(255)
+  method: VARCHAR(10)
+  route: VARCHAR(255)
+  request_hash: CHAR(64)
+  response_status: INTEGER
+  response_body: JSONB
+  created_at: TIMESTAMPTZ
+}
+
+class notification_jobs {
+  + id: BIGSERIAL <<PK>>
+  --
+  task_id: BIGINT <<FK, UNIQUE>>
+  status: VARCHAR(16)
+  attempt_count: SMALLINT
+  next_attempt_at: TIMESTAMPTZ
+  last_error: TEXT NULL
+  created_at: TIMESTAMPTZ
+  updated_at: TIMESTAMPTZ
+}
+
+class notification_attempts {
+  + id: BIGSERIAL <<PK>>
+  --
+  job_id: BIGINT <<FK>>
+  attempt_number: SMALLINT
+  attempted_at: TIMESTAMPTZ
+  http_status: INTEGER NULL
+  error_message: TEXT NULL
+}
+
+class task_events {
+  + id: BIGSERIAL <<PK>>
+  --
+  task_id: BIGINT <<FK>>
+  user_id: BIGINT <<FK, NULL>>
+  event_type: VARCHAR(32)
+  metadata: JSONB
+  created_at: TIMESTAMPTZ
+}
+
+users "1" -- "0..*" task_assignments
+tasks "1" -- "0..*" task_assignments
+tasks "1" -- "0..1" notification_jobs
+notification_jobs "1" -- "0..3" notification_attempts
+tasks "1" -- "0..*" task_events
+users "0..1" -- "0..*" task_events
+@enduml
