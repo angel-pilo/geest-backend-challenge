@@ -7,6 +7,7 @@ async function migrate(): Promise<void> {
   const migrationsDirectory = path.resolve(process.cwd(), "migrations");
 
   try {
+    await client.query("SELECT pg_advisory_lock(hashtext('geest_schema_migrations'))");
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         filename TEXT PRIMARY KEY,
@@ -41,6 +42,7 @@ async function migrate(): Promise<void> {
       }
     }
   } finally {
+    await client.query("SELECT pg_advisory_unlock(hashtext('geest_schema_migrations'))");
     client.release();
     await closePool();
   }

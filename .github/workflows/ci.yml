@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: geest
+          POSTGRES_USER: geest
+          POSTGRES_PASSWORD: geest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U geest -d geest"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://geest:geest@localhost:5432/geest
+      DATABASE_SSL: "false"
+      NOTIFY_URL: http://127.0.0.1:3999/notify
+      NOTIFY_TIMEOUT_MS: "150"
+      NOTIFY_RETRY_BASE_MS: "2"
+      NOTIFICATION_POLL_INTERVAL_MS: "10"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
