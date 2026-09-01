@@ -6,7 +6,7 @@ import { resetEnvForTests } from "../../src/config/env";
 import { closePool, query } from "../../src/database/pool";
 import { processNextNotificationJob } from "../../src/modules/notifications/notification.worker";
 
-type ServerMode = "success" | "server-error" | "timeout" | "fail-once";
+type ServerMode = "success" | "server-error" | "client-error" | "timeout" | "fail-once";
 
 describe("reliable task notifications", () => {
   const app = createApp();
@@ -21,6 +21,10 @@ describe("reliable task notifications", () => {
       incoming.on("end", () => {
         receivedBodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
         if (mode === "timeout") return;
+        if (mode === "client-error") {
+          outgoing.writeHead(400).end();
+          return;
+        }
         if (mode === "server-error" || (mode === "fail-once" && receivedBodies.length === 1)) {
           outgoing.writeHead(503).end();
           return;
@@ -126,6 +130,22 @@ describe("reliable task notifications", () => {
     ]);
   });
 
+  it("records a 4xx response without retrying", async () => {
+    mode = "client-error";
+    const { jobId } = await createJob();
+
+    await processNextNotificationJob();
+    await waitUntilDue();
+    await expect(processNextNotificationJob()).resolves.toBe(false);
+
+    const job = await query<{ status: string; attempt_count: number }>(
+      "SELECT status, attempt_count FROM notification_jobs WHERE id = $1",
+      [jobId]
+    );
+    expect(job.rows[0]).toEqual({ status: "failed", attempt_count: 1 });
+    expect(receivedBodies).toHaveLength(1);
+  });
+
   it("retries timeouts three times and records a null HTTP status", async () => {
     mode = "timeout";
     const { jobId } = await createJob();
@@ -139,6 +159,44 @@ describe("reliable task notifications", () => {
       "SELECT http_status FROM notification_attempts WHERE job_id = $1 ORDER BY attempt_number",
       [jobId]
     );
+    expect(attempts.rows).toEqual([
+      { http_status: null },
+      { http_status: null },
+      { http_status: null }
+    ]);
+  });
+
+  it("retries connection errors up to three attempts", async () => {
+    const unusedServer = createServer();
+    await new Promise<void>((resolve) => unusedServer.listen(0, "127.0.0.1", resolve));
+    const unusedPort = (unusedServer.address() as AddressInfo).port;
+    await new Promise<void>((resolve, reject) =>
+      unusedServer.close((error) => (error ? reject(error) : resolve()))
+    );
+    const activeUrl = process.env.NOTIFY_URL;
+    process.env.NOTIFY_URL = `http://127.0.0.1:${unusedPort}/notify`;
+    resetEnvForTests();
+    const { jobId } = await createJob();
+
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (attempt > 0) await waitUntilDue();
+        await processNextNotificationJob();
+      }
+    } finally {
+      process.env.NOTIFY_URL = activeUrl;
+      resetEnvForTests();
+    }
+
+    const job = await query<{ status: string; attempt_count: number }>(
+      "SELECT status, attempt_count FROM notification_jobs WHERE id = $1",
+      [jobId]
+    );
+    const attempts = await query<{ http_status: number | null }>(
+      "SELECT http_status FROM notification_attempts WHERE job_id = $1 ORDER BY attempt_number",
+      [jobId]
+    );
+    expect(job.rows[0]).toEqual({ status: "failed", attempt_count: 3 });
     expect(attempts.rows).toEqual([
       { http_status: null },
       { http_status: null },

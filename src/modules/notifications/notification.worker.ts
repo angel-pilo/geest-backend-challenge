@@ -1,5 +1,5 @@
 import { getEnv } from "../../config/env";
-import { query, withTransaction } from "../../database/pool";
+import { withTransaction } from "../../database/pool";
 
 interface ClaimedJob {
   id: string;

@@ -61,6 +61,25 @@ describe("task assignment and completion", () => {
     expect(assignments.rows[0]?.count).toBe("0");
   });
 
+  it("handles overlapping assignments concurrently without duplicates", async () => {
+    const taskId = await createTask();
+    const firstUser = await createUser("one@example.com");
+    const secondUser = await createUser("two@example.com");
+    const thirdUser = await createUser("three@example.com");
+
+    const responses = await Promise.all([
+      request(app).post(`/tasks/${taskId}/assign`).send({ userIds: [firstUser, secondUser] }),
+      request(app).post(`/tasks/${taskId}/assign`).send({ userIds: [secondUser, thirdUser] })
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const assignments = await query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM task_assignments WHERE task_id = $1",
+      [taskId]
+    );
+    expect(assignments.rows[0]?.count).toBe("3");
+  });
+
   it("rejects completion by a user who is not assigned", async () => {
     const taskId = await createTask();
     const userId = await createUser("one@example.com");
@@ -126,18 +145,30 @@ describe("task assignment and completion", () => {
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
-    const state = await query<{ status: string; completed: string; jobs: string }>(
+    const state = await query<{
+      status: string;
+      completed: string;
+      jobs: string;
+      archive_events: string;
+    }>(
       `SELECT t.status,
-              COUNT(ta.completed_at)::text AS completed,
-              COUNT(DISTINCT nj.id)::text AS jobs
+              COUNT(DISTINCT ta.user_id) FILTER (WHERE ta.completed_at IS NOT NULL)::text AS completed,
+              COUNT(DISTINCT nj.id)::text AS jobs,
+              COUNT(DISTINCT te.id) FILTER (WHERE te.event_type = 'task_archived')::text AS archive_events
          FROM tasks t
          JOIN task_assignments ta ON ta.task_id = t.id
          LEFT JOIN notification_jobs nj ON nj.task_id = t.id
+         LEFT JOIN task_events te ON te.task_id = t.id
         WHERE t.id = $1
         GROUP BY t.id`,
       [taskId]
     );
-    expect(state.rows[0]).toEqual({ status: "archived", completed: "2", jobs: "1" });
+    expect(state.rows[0]).toEqual({
+      status: "archived",
+      completed: "2",
+      jobs: "1",
+      archive_events: "1"
+    });
   });
 
   it("returns not-found errors for missing tasks and users", async () => {
