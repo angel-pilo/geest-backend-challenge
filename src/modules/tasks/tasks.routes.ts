@@ -44,6 +44,19 @@ interface TaskDetailRow extends TaskRow {
   assigned_users: AssignedUser[];
 }
 
+interface NotificationAttempt {
+  attemptNumber: number;
+  attemptedAt: string;
+  httpStatus: number | null;
+  errorMessage: string | null;
+}
+
+interface NotificationHistoryRow {
+  task_id: string;
+  job_status: "pending" | "processing" | "succeeded" | "failed" | null;
+  attempts: NotificationAttempt[];
+}
+
 function parseTaskId(value: unknown): number {
   if (typeof value !== "string" || !/^\d+$/.test(value)) {
     throw new ApiError(400, "VALIDATION_ERROR", "Invalid task ID");
@@ -271,6 +284,45 @@ tasksRouter.get("/", async (request, response) => {
   );
 
   response.json(result.rows.map(mapTask));
+});
+
+tasksRouter.get("/:idTask/notifications", async (request, response) => {
+  const taskId = parseTaskId(request.params.idTask);
+  const result = await query<NotificationHistoryRow>(
+    `SELECT t.id AS task_id,
+            nj.status AS job_status,
+            COALESCE(
+              jsonb_agg(
+                jsonb_build_object(
+                  'attemptNumber', na.attempt_number,
+                  'attemptedAt', na.attempted_at,
+                  'httpStatus', na.http_status,
+                  'errorMessage', na.error_message
+                ) ORDER BY na.attempt_number
+              ) FILTER (WHERE na.id IS NOT NULL),
+              '[]'::jsonb
+            ) AS attempts
+       FROM tasks t
+       LEFT JOIN notification_jobs nj ON nj.task_id = t.id
+       LEFT JOIN notification_attempts na ON na.job_id = nj.id
+      WHERE t.id = $1
+      GROUP BY t.id, nj.id`,
+    [taskId]
+  );
+  const history = result.rows[0];
+  if (!history) {
+    throw new ApiError(404, "TASK_NOT_FOUND", "Task not found");
+  }
+
+  response.json({
+    taskId: Number(history.task_id),
+    status: history.job_status,
+    attempts: history.attempts.map((attempt) => ({
+      ...attempt,
+      attemptNumber: Number(attempt.attemptNumber),
+      httpStatus: attempt.httpStatus === null ? null : Number(attempt.httpStatus)
+    }))
+  });
 });
 
 tasksRouter.get("/:idTask", async (request, response) => {

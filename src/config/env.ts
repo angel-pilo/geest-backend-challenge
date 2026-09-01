@@ -11,7 +11,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().max(65535).default(3000),
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL: booleanFromString,
-  NOTIFY_URL: z.url()
+  NOTIFY_URL: z.url(),
+  NOTIFY_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+  NOTIFY_RETRY_BASE_MS: z.coerce.number().int().positive().default(1000),
+  NOTIFICATION_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000)
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
