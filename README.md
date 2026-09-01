@@ -4,16 +4,19 @@ API REST para crear usuarios y tareas compartidas, completar participaciones ind
 
 ## Ejecución local
 
-Requiere Node.js 22 o superior y Docker. Copia `.env.example` como `.env` y ejecuta:
+Todo el entorno puede ejecutarse en contenedores. Requiere Docker y Docker Compose:
 
 ```bash
-npm ci
-docker compose up -d postgres
-npm run db:migrate
-npm run dev
+docker compose up --build
 ```
 
-La API queda en `http://localhost:3000`. Validación completa:
+Compose construye la API desde `Dockerfile`, inicia PostgreSQL 17, espera a que la base esté saludable y aplica las migraciones antes de servir en `http://localhost:3000`. Para detenerlo:
+
+```bash
+docker compose down
+```
+
+Para desarrollo fuera del contenedor se requiere Node.js 22 o superior. Copia `.env.example` como `.env`, inicia solo PostgreSQL con `docker compose up -d postgres` y ejecuta `npm ci`, `npm run db:migrate` y `npm run dev`. Validación completa:
 
 ```bash
 npm run typecheck
