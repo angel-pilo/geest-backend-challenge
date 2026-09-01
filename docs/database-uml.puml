@@ -74,6 +74,12 @@ class task_events {
   created_at: TIMESTAMPTZ
 }
 
+class schema_migrations {
+  + filename: TEXT <<PK>>
+  --
+  applied_at: TIMESTAMPTZ
+}
+
 users "1" -- "0..*" task_assignments
 tasks "1" -- "0..*" task_assignments
 tasks "1" -- "0..1" notification_jobs

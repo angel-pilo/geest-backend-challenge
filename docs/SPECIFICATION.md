@@ -1,92 +1,56 @@
 # Especificación técnica
 
-Este documento convierte el PDF del reto en un contrato verificable. No agrega funcionalidades de producto, excepto el historial solicitado como única mejora.
+Contrato derivado del PDF autoritativo del reto GEEST. La única mejora de producto es el historial de actividad.
 
-## Endpoints obligatorios
+## Endpoints
 
-| Método | Ruta | Respuesta exitosa |
+| Método | Ruta | Éxito |
 | --- | --- | --- |
-| POST | `/users` | `201` con el usuario creado |
-| POST | `/tasks` | `201` con la tarea creada en estado `open` |
-| POST | `/tasks/:idTask/assign` | `200` con mensaje y usuarios asignados |
-| POST | `/tasks/:idTask/complete` | `200` con mensaje y estado resultante |
-| GET | `/tasks?status=open\|archived` | `200` con arreglo de tareas |
-| GET | `/users` | `200` con usuarios y tareas pendientes |
-| GET | `/users/:idUser/tasks` | `200` con las tareas del usuario |
-| GET | `/tasks/:idTask` | `200` con el detalle de la tarea |
-| GET | `/tasks/:idTask/notifications` | `200` con los intentos de notificación |
+| POST | `/users` | `201`, usuario con ID |
+| POST | `/tasks` | `201`, tarea `open` con ID |
+| POST | `/tasks/:idTask/assign` | `200`, asignación atómica |
+| POST | `/tasks/:idTask/complete` | `200`, participación y estado resultante |
+| GET | `/tasks?status=open|archived` | `200`, tareas con usuarios y finalización |
+| GET | `/users` | `200`, usuarios con tareas abiertas pendientes |
+| GET | `/users/:idUser/tasks` | `200`, tareas y finalización del usuario |
+| GET | `/tasks/:idTask` | `200`, detalle y usuarios asignados |
+| GET | `/tasks/:idTask/notifications` | `200`, estado del trabajo e intentos |
+| GET | `/tasks/:idTask/history` | `200`, eventos de actividad |
 
-## Única mejora
+`POST /users` acepta `{ "name", "lastName", "email" }`; los tres campos son obligatorios y el email debe ser válido. `POST /tasks` acepta `{ "title", "description?" }`; solo el título es obligatorio. Asignación acepta `{ "userIds": [1, 2] }` y finalización `{ "userId": 1 }`.
 
-`GET /tasks/:idTask/history` devuelve los eventos de creación, asignación, finalización y archivado de una tarea.
+Las tareas se representan con `id`, `title`, `description`, `status`, `archivedAt`, `createdAt` y, en consultas completas, `assignedUsers`. Cada usuario asignado incluye datos básicos, `assignedAt`, `completed` y `completedAt`. Las tareas por usuario incluyen esos mismos estados desde la perspectiva del usuario.
 
-## Formato de error
+## Errores
 
-```json
-{
-  "error": {
-    "code": "TASK_NOT_FOUND",
-    "message": "Task not found"
-  }
-}
-```
-
-## Supuestos documentados
-
-1. `Idempotency-Key` es opcional. Cuando existe, su alcance es método y ruta.
-2. Misma clave y mismo body devuelven el mismo status y JSON sin repetir la operación.
-3. Misma clave y body diferente devuelve `409 IDEMPOTENCY_CONFLICT`.
-4. El correo debe tener formato válido, pero no se exige que sea único.
-5. Una asignación es atómica: si falta un usuario, no se asigna ninguno.
-6. Los usuarios previamente asignados no se duplican.
-7. No se agregan usuarios a una tarea archivada.
-8. Repetir la finalización de una participación ya terminada devuelve éxito sin efectos adicionales.
-9. Los errores de conexión, timeout y respuestas `5xx` se reintentan hasta completar tres intentos. Los `4xx` se registran sin reintento.
-10. Una notificación lógica se representa con un solo `notification_job`; sus reintentos se registran como intentos separados.
-
-## Contratos de respuesta
-
-### Usuario creado
+Toda respuesta de error tiene exactamente:
 
 ```json
-{
-  "id": 1,
-  "name": "Angel",
-  "lastName": "Aceves",
-  "email": "angel@example.com"
-}
+{"error":{"code":"TASK_NOT_FOUND","message":"Task not found"}}
 ```
 
-### Tarea creada
+Códigos usados: `VALIDATION_ERROR` (`400`), `INVALID_JSON` (`400`), `INVALID_IDEMPOTENCY_KEY` (`400`), `USER_NOT_FOUND` (`404`), `TASK_NOT_FOUND` (`404`), `ROUTE_NOT_FOUND` (`404`), `IDEMPOTENCY_CONFLICT` (`409`), `USER_NOT_ASSIGNED` (`409`), `TASK_ARCHIVED` (`409`) e `INTERNAL_SERVER_ERROR` (`500`).
+
+## Idempotencia y concurrencia
+
+Todos los POST aceptan `Idempotency-Key` opcional, máximo 255 caracteres. Su identidad es clave + método + ruta concreta. El body se canonicaliza y se almacena mediante SHA-256. La misma identidad/body reproduce el status y JSON almacenados; un body distinto devuelve `409 IDEMPOTENCY_CONFLICT`.
+
+La exclusión se obtiene con un bloqueo asesor transaccional de PostgreSQL. La operación, sus eventos y la respuesta idempotente se confirman en una sola transacción. Las asignaciones bloquean la tarea, validan todos los usuarios y usan la clave `(task_id, user_id)`; no puede existir una asignación parcial o duplicada.
+
+La finalización bloquea la tarea y participación. Si quedan pendientes continúa `open`; si no, actualiza a `archived`, fija `archived_at`, crea un evento de archivo y un único `notification_job`. Dos finalizaciones concurrentes quedan serializadas por tarea.
+
+## Notificaciones
+
+Al archivar se agenda un POST a `NOTIFY_URL`:
 
 ```json
-{
-  "id": 1,
-  "title": "Prepare report",
-  "description": null,
-  "status": "open",
-  "archivedAt": null
-}
+{"taskId":123,"title":"Título","archivedAt":"2026-08-20T20:00:00.000Z"}
 ```
 
-### Asignación
+Un `2xx` marca éxito. Conexión, timeout o `5xx` se reintentan con esperas exponenciales hasta tres intentos; `4xx` falla sin reintento. El trabajador reclama filas con `FOR UPDATE SKIP LOCKED`, recupera reclamos abandonados y registra `attemptNumber`, `attemptedAt`, `httpStatus` nullable y `errorMessage` nullable. `/notifications` devuelve `{ taskId, status, attempts }`.
 
-```json
-{
-  "message": "Users assigned successfully",
-  "taskId": 1,
-  "assignedUserIds": [1, 2]
-}
-```
+## Historial y supuestos
 
-### Finalización
+El historial devuelve `task_created`, `users_assigned`, `user_completed` y `task_archived`, con `userId`, metadata y timestamp. Solo registra cambios efectivos.
 
-```json
-{
-  "message": "User task participation completed",
-  "taskId": 1,
-  "userId": 1,
-  "taskStatus": "open",
-  "archivedAt": null
-}
-```
+El email no es único. Una asignación con cualquier usuario inexistente falla completa. No se asigna a una tarea archivada. Repetir una finalización completada es éxito sin efectos nuevos. Las consultas se ordenan por ID/asignación y los eventos por timestamp/ID para respuestas deterministas.

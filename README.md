@@ -1,29 +1,19 @@
 # GEEST Backend Challenge
 
-API REST para gestionar usuarios, tareas compartidas, finalización individual y archivado automático. El objetivo técnico es mantener resultados correctos ante solicitudes duplicadas o concurrentes y registrar los intentos de notificación externa.
+API REST para crear usuarios y tareas compartidas, completar participaciones individuales, archivar automáticamente una tarea cuando todos terminan y notificar a un sistema externo de forma confiable.
 
-## Alcance
+## Ejecución local
 
-- Node.js con TypeScript y Express.
-- PostgreSQL con migraciones SQL versionadas.
-- Nueve endpoints obligatorios definidos por el reto.
-- Idempotencia en todos los endpoints `POST`.
-- Archivado y creación de notificación sin duplicados.
-- Máximo tres intentos de notificación ante timeout o respuesta `5xx`.
-- Tests unitarios y de integración.
-- Mejora única: historial de actividad por tarea.
-
-## Preparación local
+Requiere Node.js 22 o superior y Docker. Copia `.env.example` como `.env` y ejecuta:
 
 ```bash
-cp .env.example .env
-npm install
+npm ci
 docker compose up -d postgres
 npm run db:migrate
 npm run dev
 ```
 
-## Comandos
+La API queda en `http://localhost:3000`. Validación completa:
 
 ```bash
 npm run typecheck
@@ -31,4 +21,47 @@ npm run build
 npm test
 ```
 
-La especificación de respuestas y supuestos está en `docs/SPECIFICATION.md`. El UML versionado se encuentra en `docs/database-uml.puml`.
+Las pruebas usan PostgreSQL real indicado por `DATABASE_URL`; antes de ejecutarlas deben haberse aplicado las migraciones. Los endpoints son:
+
+| Método | Ruta |
+| --- | --- |
+| POST | `/users` |
+| POST | `/tasks` |
+| POST | `/tasks/:idTask/assign` |
+| POST | `/tasks/:idTask/complete` |
+| GET | `/tasks?status=open|archived` |
+| GET | `/users` |
+| GET | `/users/:idUser/tasks` |
+| GET | `/tasks/:idTask` |
+| GET | `/tasks/:idTask/notifications` |
+| GET | `/tasks/:idTask/history` |
+
+Todos los errores usan `{ "error": { "code": "...", "message": "..." } }`. Los contratos completos están en `docs/SPECIFICATION.md` y el UML en `docs/database-uml.puml`.
+
+## Decisiones técnicas
+
+- Express y TypeScript estricto; Zod valida cuerpos, parámetros y configuración.
+- SQL directo con `pg`: las transacciones y bloqueos quedan explícitos, sin semántica oculta de ORM.
+- PostgreSQL garantiza asignaciones únicas mediante clave primaria compuesta y un solo trabajo de notificación mediante `UNIQUE(task_id)`.
+- Cada POST acepta `Idempotency-Key`. Un bloqueo asesor transaccional serializa la misma clave; la operación y su respuesta se guardan en la misma transacción. Repetir clave y body reproduce status/body; cambiar el body devuelve `409 IDEMPOTENCY_CONFLICT`.
+- Completar una participación bloquea la tarea con `FOR UPDATE`. Así, dos últimos usuarios concurrentes producen un archivado, un evento y un trabajo lógico de notificación.
+- El trabajador reclama trabajos con `FOR UPDATE SKIP LOCKED`. Reintenta conexión, timeout o `5xx` hasta tres veces con espera exponencial; un `4xx` se registra sin reintento. Cada intento conserva número, timestamp, status HTTP cuando existe y error.
+- Las migraciones SQL versionan el esquema; Docker Compose reproduce PostgreSQL 17 localmente. El contenedor de producción migra antes de iniciar.
+
+## Mejora única: historial de actividad
+
+`GET /tasks/:idTask/history` resuelve la falta de trazabilidad en tareas compartidas: permite entender quién terminó, cuándo se asignó trabajo y cuándo se archivó. Era más necesaria que agregar búsqueda, autenticación o UI porque ayuda a diagnosticar concurrencia y operación sin alterar el flujo solicitado. Solo registra cambios efectivos, no replays idempotentes.
+
+## Supuestos y alcance
+
+- `Idempotency-Key` es opcional; si se envía, su alcance es método y ruta concreta. El body se compara de forma canónica, sin depender del orden de claves JSON.
+- El email debe ser válido, pero no se exige unicidad. Una asignación falla completa si falta cualquier usuario; IDs repetidos o ya asignados no duplican relaciones.
+- Repetir una finalización ya completada devuelve éxito sin efectos nuevos. No se asigna a tareas archivadas.
+- `2xx` confirma una notificación; `4xx` es fallo definitivo; `5xx`, timeout y conexión son reintentables.
+- No se recortó funcionalidad del reto. Deliberadamente no existen frontend, autenticación, roles, ORM ni panel administrativo.
+
+## Repositorio y producción
+
+Repositorio público: https://github.com/angel-pilo/geest-backend-challenge
+
+La imagen de producción está definida en `Dockerfile`. La URL pública se añadirá aquí después de autorizar y completar el despliegue; debe permanecer disponible durante los siete días posteriores a la entrega. El proveedor se elegirá por soporte de contenedor, PostgreSQL administrado, HTTPS y bajo costo.
