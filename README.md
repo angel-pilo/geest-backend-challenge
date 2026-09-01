@@ -64,4 +64,6 @@ Todos los errores usan `{ "error": { "code": "...", "message": "..." } }`. Los c
 
 Repositorio público: https://github.com/angel-pilo/geest-backend-challenge
 
-La imagen de producción está definida en `Dockerfile` y `render.yaml` crea un servicio web más PostgreSQL administrado. Se eligió Render porque despliega el contenedor desde GitHub, entrega HTTPS y ofrece recursos gratuitos suficientes para la evaluación de siete días. La URL pública se añadirá aquí al terminar el despliegue.
+API pública: https://geest-backend-challenge.onrender.com
+
+La imagen de producción está definida en `Dockerfile` y `render.yaml` crea un servicio web más PostgreSQL administrado. Se eligió Render porque despliega el contenedor desde GitHub, entrega HTTPS y ofrece recursos gratuitos suficientes para la evaluación de siete días. Al usar el plan gratuito, la primera solicitud después de un periodo de inactividad puede tardar cerca de un minuto mientras inicia el contenedor.
