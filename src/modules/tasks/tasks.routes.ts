@@ -57,6 +57,14 @@ interface NotificationHistoryRow {
   attempts: NotificationAttempt[];
 }
 
+interface TaskEventRow {
+  id: string;
+  event_type: string;
+  user_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
 function parseTaskId(value: unknown): number {
   if (typeof value !== "string" || !/^\d+$/.test(value)) {
     throw new ApiError(400, "VALIDATION_ERROR", "Invalid task ID");
@@ -121,6 +129,11 @@ tasksRouter.post("/", idempotent(async (request, client) => {
     [parsed.data.title, parsed.data.description ?? null]
   );
   const task = result.rows[0];
+  await client.query(
+    `INSERT INTO task_events (task_id, event_type)
+     VALUES ($1, 'task_created')`,
+    [task?.id]
+  );
 
   return {
     statusCode: 201,
@@ -162,13 +175,22 @@ tasksRouter.post("/:idTask/assign", idempotent(async (request, client) => {
     throw new ApiError(404, "USER_NOT_FOUND", "One or more users were not found");
   }
 
-  await client.query(
+  const inserted = await client.query<{ user_id: string }>(
     `INSERT INTO task_assignments (task_id, user_id)
      SELECT $1, user_id
        FROM unnest($2::bigint[]) AS user_id
-     ON CONFLICT (task_id, user_id) DO NOTHING`,
+     ON CONFLICT (task_id, user_id) DO NOTHING
+     RETURNING user_id`,
     [taskId, userIds]
   );
+  const newlyAssignedUserIds = inserted.rows.map((row) => Number(row.user_id));
+  if (newlyAssignedUserIds.length > 0) {
+    await client.query(
+      `INSERT INTO task_events (task_id, event_type, metadata)
+       VALUES ($1, 'users_assigned', $2)`,
+      [taskId, { userIds: newlyAssignedUserIds }]
+    );
+  }
 
   return {
     statusCode: 200,
@@ -211,11 +233,17 @@ tasksRouter.post("/:idTask/complete", idempotent(async (request, client) => {
     throw new ApiError(409, "USER_NOT_ASSIGNED", "User is not assigned to this task");
   }
 
-  if (assignmentRow.completed_at === null) {
+  const newlyCompleted = assignmentRow.completed_at === null;
+  if (newlyCompleted) {
     await client.query(
       `UPDATE task_assignments
           SET completed_at = NOW()
         WHERE task_id = $1 AND user_id = $2`,
+      [taskId, userId]
+    );
+    await client.query(
+      `INSERT INTO task_events (task_id, user_id, event_type)
+       VALUES ($1, $2, 'user_completed')`,
       [taskId, userId]
     );
   }
@@ -248,6 +276,11 @@ tasksRouter.post("/:idTask/complete", idempotent(async (request, client) => {
            VALUES ($1)
            ON CONFLICT (task_id) DO NOTHING`,
           [taskId]
+        );
+        await client.query(
+          `INSERT INTO task_events (task_id, event_type, metadata)
+           VALUES ($1, 'task_archived', $2)`,
+          [taskId, { archivedAt }]
         );
       }
     }
@@ -321,6 +354,33 @@ tasksRouter.get("/:idTask/notifications", async (request, response) => {
       ...attempt,
       attemptNumber: Number(attempt.attemptNumber),
       httpStatus: attempt.httpStatus === null ? null : Number(attempt.httpStatus)
+    }))
+  });
+});
+
+tasksRouter.get("/:idTask/history", async (request, response) => {
+  const taskId = parseTaskId(request.params.idTask);
+  const task = await query("SELECT 1 FROM tasks WHERE id = $1", [taskId]);
+  if (!task.rows[0]) {
+    throw new ApiError(404, "TASK_NOT_FOUND", "Task not found");
+  }
+
+  const events = await query<TaskEventRow>(
+    `SELECT id, event_type, user_id, metadata, created_at
+       FROM task_events
+      WHERE task_id = $1
+      ORDER BY created_at, id`,
+    [taskId]
+  );
+
+  response.json({
+    taskId,
+    events: events.rows.map((event) => ({
+      id: Number(event.id),
+      eventType: event.event_type,
+      userId: event.user_id === null ? null : Number(event.user_id),
+      metadata: event.metadata,
+      createdAt: event.created_at
     }))
   });
 });
