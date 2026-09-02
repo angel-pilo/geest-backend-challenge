@@ -68,7 +68,7 @@ describe("POST idempotency", () => {
     const response = await request(app)
       .post("/users")
       .set("Idempotency-Key", "conflicting-user")
-      .send({ ...userBody, email: "different@example.com" })
+      .send({ ...userBody, email: "diferente@example.com" })
       .expect(409);
 
     expect(response.body).toEqual({
@@ -81,10 +81,10 @@ describe("POST idempotency", () => {
 
   it("scopes a key to the concrete method and route", async () => {
     const user = await query<{ id: string }>(
-      "INSERT INTO users (name, last_name, email) VALUES ('Test', 'User', 'test@example.com') RETURNING id"
+      "INSERT INTO users (name, last_name, email) VALUES ('Usuario', 'Prueba', 'usuario.prueba@example.com') RETURNING id"
     );
     const tasks = await query<{ id: string }>(
-      "INSERT INTO tasks (title) VALUES ('First'), ('Second') RETURNING id"
+      "INSERT INTO tasks (title) VALUES ('Primera tarea'), ('Segunda tarea') RETURNING id"
     );
     const userId = Number(user.rows[0]?.id);
 

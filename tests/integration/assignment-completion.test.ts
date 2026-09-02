@@ -19,20 +19,20 @@ describe("task assignment and completion", () => {
 
   async function createUser(email: string): Promise<number> {
     const result = await query<IdRow>(
-      "INSERT INTO users (name, last_name, email) VALUES ('Test', 'User', $1) RETURNING id",
+      "INSERT INTO users (name, last_name, email) VALUES ('Usuario', 'Prueba', $1) RETURNING id",
       [email]
     );
     return Number(result.rows[0]?.id);
   }
 
   async function createTask(): Promise<number> {
-    const result = await query<IdRow>("INSERT INTO tasks (title) VALUES ('Shared task') RETURNING id");
+    const result = await query<IdRow>("INSERT INTO tasks (title) VALUES ('Tarea compartida') RETURNING id");
     return Number(result.rows[0]?.id);
   }
 
   it("assigns users without duplicating relationships", async () => {
     const taskId = await createTask();
-    const userId = await createUser("one@example.com");
+    const userId = await createUser("usuario.uno@example.com");
 
     await request(app).post(`/tasks/${taskId}/assign`).send({ userIds: [userId, userId] }).expect(200);
     await request(app).post(`/tasks/${taskId}/assign`).send({ userIds: [userId] }).expect(200);
@@ -46,7 +46,7 @@ describe("task assignment and completion", () => {
 
   it("rolls back the entire assignment when any user does not exist", async () => {
     const taskId = await createTask();
-    const userId = await createUser("one@example.com");
+    const userId = await createUser("usuario.uno@example.com");
 
     const response = await request(app)
       .post(`/tasks/${taskId}/assign`)
@@ -63,9 +63,9 @@ describe("task assignment and completion", () => {
 
   it("handles overlapping assignments concurrently without duplicates", async () => {
     const taskId = await createTask();
-    const firstUser = await createUser("one@example.com");
-    const secondUser = await createUser("two@example.com");
-    const thirdUser = await createUser("three@example.com");
+    const firstUser = await createUser("usuario.uno@example.com");
+    const secondUser = await createUser("usuario.dos@example.com");
+    const thirdUser = await createUser("usuario.tres@example.com");
 
     const responses = await Promise.all([
       request(app).post(`/tasks/${taskId}/assign`).send({ userIds: [firstUser, secondUser] }),
@@ -82,7 +82,7 @@ describe("task assignment and completion", () => {
 
   it("rejects completion by a user who is not assigned", async () => {
     const taskId = await createTask();
-    const userId = await createUser("one@example.com");
+    const userId = await createUser("usuario.uno@example.com");
 
     const response = await request(app)
       .post(`/tasks/${taskId}/complete`)
@@ -96,8 +96,8 @@ describe("task assignment and completion", () => {
 
   it("keeps a task open while an assigned user remains pending", async () => {
     const taskId = await createTask();
-    const firstUser = await createUser("one@example.com");
-    const secondUser = await createUser("two@example.com");
+    const firstUser = await createUser("usuario.uno@example.com");
+    const secondUser = await createUser("usuario.dos@example.com");
     await request(app)
       .post(`/tasks/${taskId}/assign`)
       .send({ userIds: [firstUser, secondUser] })
@@ -113,7 +113,7 @@ describe("task assignment and completion", () => {
 
   it("archives the task and creates one notification job after everyone completes", async () => {
     const taskId = await createTask();
-    const userId = await createUser("one@example.com");
+    const userId = await createUser("usuario.uno@example.com");
     await request(app).post(`/tasks/${taskId}/assign`).send({ userIds: [userId] }).expect(200);
 
     const response = await request(app)
@@ -131,8 +131,8 @@ describe("task assignment and completion", () => {
 
   it("handles the last two users completing concurrently with one archive and one job", async () => {
     const taskId = await createTask();
-    const firstUser = await createUser("one@example.com");
-    const secondUser = await createUser("two@example.com");
+    const firstUser = await createUser("usuario.uno@example.com");
+    const secondUser = await createUser("usuario.dos@example.com");
     await request(app)
       .post(`/tasks/${taskId}/assign`)
       .send({ userIds: [firstUser, secondUser] })

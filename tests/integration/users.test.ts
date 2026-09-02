@@ -51,7 +51,7 @@ describe("user endpoints", () => {
     );
     const task = await query<{ id: string }>(
       `INSERT INTO tasks (title, description)
-       VALUES ('Pending task', 'Still open')
+       VALUES ('Tarea pendiente', 'Aún abierta')
        RETURNING id`
     );
     await query(
@@ -71,8 +71,8 @@ describe("user endpoints", () => {
         pendingTasks: [
           {
             id: Number(task.rows[0]?.id),
-            title: "Pending task",
-            description: "Still open",
+            title: "Tarea pendiente",
+            description: "Aún abierta",
             status: "open",
             assignedAt: expect.any(String)
           }

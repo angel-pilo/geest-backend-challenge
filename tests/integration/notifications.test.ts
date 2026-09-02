@@ -57,7 +57,7 @@ describe("reliable task notifications", () => {
     const result = await query<{ task_id: string; job_id: string }>(
       `WITH task AS (
          INSERT INTO tasks (title, status, archived_at)
-         VALUES ('Notify customer', 'archived', NOW())
+         VALUES ('Notificar al cliente', 'archived', NOW())
          RETURNING id
        )
        INSERT INTO notification_jobs (task_id)
@@ -85,7 +85,7 @@ describe("reliable task notifications", () => {
     );
     expect(job.rows[0]).toEqual({ status: "succeeded", attempt_count: 1, last_error: null });
     expect(receivedBodies).toEqual([
-      { taskId, title: "Notify customer", archivedAt: expect.any(String) }
+      { taskId, title: "Notificar al cliente", archivedAt: expect.any(String) }
     ]);
   });
 

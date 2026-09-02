@@ -21,7 +21,7 @@ describe("task activity history", () => {
     const task = await request(app)
       .post("/tasks")
       .set("Idempotency-Key", "history-create")
-      .send({ title: "Tracked task" })
+      .send({ title: "Tarea con historial" })
       .expect(201);
 
     await request(app)
@@ -59,7 +59,7 @@ describe("task activity history", () => {
   });
 
   it("does not duplicate creation history when an idempotent request is replayed", async () => {
-    const body = { title: "One creation" };
+    const body = { title: "Creación única" };
     await request(app).post("/tasks").set("Idempotency-Key", "one-history").send(body).expect(201);
     const replay = await request(app)
       .post("/tasks")

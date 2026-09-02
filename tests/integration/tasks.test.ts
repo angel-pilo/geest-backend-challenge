@@ -16,20 +16,20 @@ describe("task query endpoints", () => {
   it("creates an open task with an optional description", async () => {
     const response = await request(app)
       .post("/tasks")
-      .send({ title: " Prepare report ", description: " Quarterly results " })
+      .send({ title: " Preparar informe ", description: " Resultados trimestrales " })
       .expect(201);
 
     expect(response.body).toEqual({
       id: expect.any(Number),
-      title: "Prepare report",
-      description: "Quarterly results",
+      title: "Preparar informe",
+      description: "Resultados trimestrales",
       status: "open",
       archivedAt: null,
       createdAt: expect.any(String)
     });
   });
 
-  it.each([{}, { description: "Missing title" }, { title: "" }])(
+  it.each([{}, { description: "Falta el título" }, { title: "" }])(
     "rejects invalid task data",
     async (body) => {
       const response = await request(app).post("/tasks").send(body).expect(400);
@@ -44,14 +44,14 @@ describe("task query endpoints", () => {
       "INSERT INTO users (name, last_name, email) VALUES ('Ana', 'López', 'ana@example.com') RETURNING id"
     );
     const openTask = await query<{ id: string }>(
-      "INSERT INTO tasks (title) VALUES ('Open task') RETURNING id"
+      "INSERT INTO tasks (title) VALUES ('Tarea abierta') RETURNING id"
     );
     await query(
       "INSERT INTO task_assignments (task_id, user_id, completed_at) VALUES ($1, $2, NOW())",
       [openTask.rows[0]?.id, user.rows[0]?.id]
     );
     await query(
-      "INSERT INTO tasks (title, status, archived_at) VALUES ('Archived task', 'archived', NOW())"
+      "INSERT INTO tasks (title, status, archived_at) VALUES ('Tarea archivada', 'archived', NOW())"
     );
 
     const response = await request(app).get("/tasks?status=open").expect(200);
@@ -59,7 +59,7 @@ describe("task query endpoints", () => {
     expect(response.body).toHaveLength(1);
     expect(response.body[0]).toMatchObject({
       id: Number(openTask.rows[0]?.id),
-      title: "Open task",
+      title: "Tarea abierta",
       status: "open",
       assignedUsers: [
         {
@@ -80,15 +80,15 @@ describe("task query endpoints", () => {
 
   it("returns complete task information", async () => {
     const task = await query<{ id: string }>(
-      "INSERT INTO tasks (title, description) VALUES ('Task', 'Details') RETURNING id"
+      "INSERT INTO tasks (title, description) VALUES ('Tarea de ejemplo', 'Detalles de la tarea') RETURNING id"
     );
 
     const response = await request(app).get(`/tasks/${task.rows[0]?.id}`).expect(200);
 
     expect(response.body).toEqual({
       id: Number(task.rows[0]?.id),
-      title: "Task",
-      description: "Details",
+      title: "Tarea de ejemplo",
+      description: "Detalles de la tarea",
       status: "open",
       archivedAt: null,
       createdAt: expect.any(String),
@@ -108,7 +108,7 @@ describe("task query endpoints", () => {
       "INSERT INTO users (name, last_name, email) VALUES ('Ana', 'López', 'ana@example.com') RETURNING id"
     );
     const task = await query<{ id: string }>(
-      "INSERT INTO tasks (title) VALUES ('Assigned task') RETURNING id"
+      "INSERT INTO tasks (title) VALUES ('Tarea asignada') RETURNING id"
     );
     await query("INSERT INTO task_assignments (task_id, user_id) VALUES ($1, $2)", [
       task.rows[0]?.id,
@@ -122,7 +122,7 @@ describe("task query endpoints", () => {
     expect(response.body).toEqual([
       expect.objectContaining({
         id: Number(task.rows[0]?.id),
-        title: "Assigned task",
+        title: "Tarea asignada",
         completed: false,
         completedAt: null
       })
